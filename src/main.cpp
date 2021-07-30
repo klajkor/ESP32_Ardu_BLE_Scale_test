@@ -22,9 +22,14 @@ static boolean doScanRestart = false;
 static BLEScan *pBLEScan;
 static BLERemoteCharacteristic *pRemoteCharacteristic;
 static BLEAdvertisedDevice *myDevice;
-uint8_t bd_addr[6] = {0xFF, 0xFF, 0x10, 0x00, 0x03, 0x1C};
+//uint8_t bd_addr[6] = {0xFF, 0xFF, 0x10, 0x00, 0x03, 0x1C};
 //uint8_t bd_addr[6] = {0x1C, 0x03, 0x00, 0x10, 0xFF, 0xFF};
-BLEAddress BattServer(bd_addr);
+#if defined(__SAMD51__)
+uint8_t bd_addr[6] = {0x1C, 0x03, 0x00, 0x10, 0xFF, 0xFF};
+#else
+uint8_t bd_addr[6] = {0xFF, 0xFF, 0x10, 0x00, 0x03, 0x1C};
+#endif
+BLEAddress DecentScaleAddr(bd_addr);
 
 uint8_t cmd_LedOn[7] = {0x03, 0x0A, 0x01, 0x01, 0x00, 0x00, 0x09};
 uint8_t cmd_LedOff[7] = {0x03, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x09};
@@ -124,6 +129,7 @@ class MyClientCallback : public BLEClientCallbacks
   {
     connected = false;
     Serial.println("onDisconnect method");
+    doConnect = true;
   }
 };
 
@@ -131,30 +137,25 @@ bool connectToServer()
 {
   uint8_t read_cycle;
   std::string read_value = "123456789012345678901";
-  std::string value = "123456789012345678901";
-  Serial.print("Forming a connection to ");
-  Serial.println(myDevice->getAddress().toString().c_str());
-  //Serial.println(BattServer.toString().c_str());
 
   BLEClient *pClient = BLEDevice::createClient();
   if (pClient == nullptr)
   {
-    Serial.println(" - Failed to create client");
+    Serial.println("Failed to create a BLE client");
     return false;
   }
-  Serial.println(" - Created client");
+  Serial.println("Created a BLE client");
+  Serial.print("Forming a connection to ");
+  Serial.println(myDevice->getAddress().toString().c_str());
+  //Serial.println(DecentScaleAddr.toString().c_str());
 
   pClient->setClientCallbacks(new MyClientCallback());
 
   // Connect to the remove BLE Server.
   pClient->connect(myDevice); // if you pass BLEAdvertisedDevice instead of address, it will be recognized type of peer device address (public or private)
-  /*
-  if (pClient->connect(BattServer, GAP_REMOTE_ADDR_LE_PUBLIC) == false)
-  {
-    Serial.println("Connection failed!");
-    return false;
-  }
-  */
+
+  //pClient->connect(DecentScaleAddr);
+
   delay(100);
   if (pClient->isConnected())
   {
@@ -191,17 +192,17 @@ bool connectToServer()
     if (pRemoteCharacteristic->canWrite())
     {
       Serial.println(" -  and it is writeable");
-      Serial.println("Sending Led OFF command to scale ");
+      Serial.println(F("Sending Led OFF command to scale "));
       pRemoteCharacteristic->writeValue(cmd_LedOff, 7, false);
       delay(500);
       pRemoteCharacteristic->writeValue(cmd_LedOff, 7, false);
       delay(500);
-      Serial.println("Sending Led ON command to scale ");
+      Serial.println(F("Sending Led ON command to scale "));
       pRemoteCharacteristic->writeValue(cmd_LedOn, 7, false);
       delay(500);
       pRemoteCharacteristic->writeValue(cmd_LedOn, 7, false);
       delay(500);
-      Serial.println("Sending Timer Stop & Reset command to scale ");
+      Serial.println(F("Sending Timer Stop & Reset command to scale "));
       pRemoteCharacteristic->writeValue(cmd_TimerStop, 7, false);
       delay(500);
       pRemoteCharacteristic->writeValue(cmd_TimerStop, 7, false);
@@ -231,13 +232,13 @@ bool connectToServer()
     read_cycle = 0;
     while (read_cycle < 10)
     {
-      value = pRemoteCharacteristic->readValue();
-      if (value[0] != 3)
+      read_value = pRemoteCharacteristic->readValue();
+      if (read_value.at(0) != 3)
       {
         read_cycle = 10;
       }
       Serial.print("Value: ");
-      Serial_println_string_in_hex(&value);
+      Serial_println_string_in_hex(&read_value);
       read_cycle++;
       delay(2000);
     }
@@ -257,14 +258,10 @@ bool connectToServer()
   pClient->disconnect();
   connected = false;
   read_cycle = 0;
-  while (pClient->isConnected() && read_cycle < 50)
+  while (pClient->isConnected() && read_cycle < 15)
   {
     Serial.print(".");
     delay(1000);
-    if (read_cycle & 0x10)
-    {
-      pClient->disconnect();
-    }
     read_cycle++;
   }
   Serial.println("Disconnected");
@@ -281,11 +278,11 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
    */
   void onResult(BLEAdvertisedDevice advertisedDevice)
   {
-    //Serial.print("BLE Advertised Device found: ");
-    //Serial.println(advertisedDevice.toString().c_str());
+    Serial.print("BLE Advertised Device found: ");
+    Serial.println(advertisedDevice.toString().c_str());
 
     // We have found a device, let us now see if it contains the service we are looking for.
-    if (memcmp(advertisedDevice.getAddress().getNative(), BattServer.getNative(), 6) == 0)
+    if (memcmp(advertisedDevice.getAddress().getNative(), DecentScaleAddr.getNative(), 6) == 0)
     {
       /*
       Serial.print("BATT Client Device found: ");
@@ -319,13 +316,14 @@ void setup()
   // Retrieve a Scanner and set the callback we want to use to be informed when we
   // have detected a new device.  Specify that we want active scanning and start the
   // scan to run for 5 seconds.
-
   pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pBLEScan->setInterval(1349);
   pBLEScan->setWindow(449);
   pBLEScan->setActiveScan(true);
   pBLEScan->start(25, true);
+  /*
+  */
 
   doConnect = true;
 } // End of setup.
@@ -346,12 +344,14 @@ void loop()
     else
     {
       Serial.println("We are now disconnected from the BLE Server.");
+      doConnect = true;
     }
-    doConnect = false;
     if (doScanRestart == true)
     {
+      doScanRestart = false;
       /*
       Serial.println("BLE Scan stop");
+      pBLEScan = BLEDevice::getScan();
       pBLEScan->stop();
       delay(2000);
       delay(2000);
@@ -361,7 +361,6 @@ void loop()
       pBLEScan->setWindow(449);
       pBLEScan->setActiveScan(true);
       pBLEScan->start(25, true);
-      doScanRestart = false;
       */
     }
   }
